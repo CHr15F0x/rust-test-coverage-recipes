@@ -12,18 +12,48 @@ function partial_cleanup() {
   rm -f ./${REPORT}*.info
 }
 
-# Cleanup files from previous run
-# Just in case there are leftovers
-partial_cleanup
-rm -rf ./${REPORT}
+function init_cov() {
+  # Cleanup files from previous run
+  # Just in case there are leftovers
+  partial_cleanup
+  rm -rf ./${REPORT}
+  # Required to use the gcov format (*.gcno, *.gcda)
+  export CARGO_INCREMENTAL=0
+  export RUSTFLAGS="-Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort"
+  export RUSTDOCFLAGS="-Cpanic=abort"
+  # Nightly is required for gcov compatible cov instrumentation
+  # See https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file
+  if [ -f rust-toolchain ]; then
+    mv rust-toolchain rust-toolchain.bak
+  fi
+  echo "nightly" > rust-toolchain
+}
 
-# What happens next is a delicate matter, so:
-cargo clean
+function cleanup_cov() {
+  # Kill all jobs if any still running, helpful if using SIGINT or like
+  [[ -z "$(jobs -p)" ]] || kill $(jobs -p)
+  # Cleanup intermediate files
+  partial_cleanup
+  # Cleanup env variables
+  unset CARGO_INCREMENTAL
+  unset RUSTFLAGS
+  unset RUSTDOCFLAGS
+  # Revert to whatever the default toolchain is
+  # See https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file
+  if [ -f rust-toolchain.bak ]; then
+    mv rust-toolchain.bak rust-toolchain
+  else
+    rm -f rust-toolchain
+  fi
+  echo "Current toolchain settings:"
+  rustup show
+}
 
-# Required to use the gcov format (*.gcno, *.gcda)
-export CARGO_INCREMENTAL=0
-export RUSTFLAGS="-Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort"
-export RUSTDOCFLAGS="-Cpanic=abort"
+# Always call cleanup on exit, regardless if errors occur
+trap cleanup_cov EXIT
+
+# Set everything up
+init_cov
 
 # Run the tests
 source run-all-tests.sh
@@ -44,11 +74,3 @@ genhtml \
   --highlight \
   --ignore-errors source \
   ${REPORT}-1.info
-
-# Partial cleanup files from this run, at least the most prolific ones
-partial_cleanup
-
-# Cleanup state
-unset CARGO_INCREMENTAL
-unset RUSTFLAGS
-unset RUSTDOCFLAGS
